@@ -1,6 +1,11 @@
 #ifndef __AKNNQALSHZKF_H
 #define __AKNNQALSHZKF_H
 
+// -----------------------------------------------------------------------------
+//  long SQLs
+// -----------------------------------------------------------------------------
+
+
 struct Data
 {
     int size_of_float;
@@ -8,6 +13,7 @@ struct Data
     int d;
     float **matrix;
 };
+
 
 
 #endif

@@ -1,4 +1,5 @@
 #include "util.h"
+#include "random.h"
 
 float 
 calc_inner_product(			// calc inner product
@@ -12,4 +13,11 @@ calc_inner_product(			// calc inner product
 		r += p1[i] * p2[i];
 	}
 	return r;
+}
+
+float 
+calc_l2_prob(	// calc prob <p1_> and <p2_> of L2 dist
+	float x)							// x = w / (2.0 * r)
+{
+	return new_gaussian_prob(x);
 }

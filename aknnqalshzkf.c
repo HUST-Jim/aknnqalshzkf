@@ -38,17 +38,22 @@ const float ANGLE          = PI / 8.0f;
 
 const int   CANDIDATES     = 100;
 
+
+
 // -----------------------------------------------------------------------------
 //  function prototypes
 // -----------------------------------------------------------------------------
 PG_FUNCTION_INFO_V1(aknnqalsh_index);
+PG_FUNCTION_INFO_V1(aknnqalsh_knn);
 Datum aknnqalsh_index(PG_FUNCTION_ARGS);
+Datum aknnqalsh_knn(PG_FUNCTION_ARGS);
 void fill_data_struct_from_file(char *abs_path, struct Data *data_struct);
 void fill_data_table(char *table_name, struct Data data);
 void fill_param_table(char *dataset_name, int n, int d, float c, int m, int l);
 void build_datahash_i_tables(struct Data data, struct Data hash_functions);
-float calc_l2_prob(float);
+
 void insert_into_logs(int id, char * log);
+void build_datarephash_i_tables(int m, int h);
 
 /* 
 数据集文件路径、查询集文件路径、 数据集名称、n、d、c、h
@@ -182,9 +187,10 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
     fill_data_table("hashfuncs", hash_functions_);
     
     // -------------------------------------------------------------------------
-	//  build datahash_i tables, i = [1: m]
+	//  build datahash_i and datarephash_i tables, i = [1: m]
 	// -------------------------------------------------------------------------
     build_datahash_i_tables(data_, hash_functions_);
+    build_datarephash_i_tables(m_, h);
     
     
     pfree(abs_path_data);
@@ -212,6 +218,29 @@ build_datahash_i_tables(struct Data data, struct Data hash_functions)
             sprintf(command, "INSERT INTO datahash_%d VALUES (%d, %f)", i + 1, j + 1, hash);
             SPI_exec(command, 0);
         }
+    }
+    SPI_finish();
+}
+
+void 
+build_datarephash_i_tables(int m, int h) // h: 每组聚合的向量个数
+{
+    //ereport(NOTICE,
+	//				(errmsg("building table: datarephash_%d")));
+    char command[1000];
+    int i;
+    SPI_connect();
+    for (i = 0; i < m; i++)
+    {
+        sprintf(command, "DROP TABLE IF EXISTS datarephash_%d; CREATE TABLE datarephash_%d (id int, rephash real, idarray int[])", i + 1, i + 1);
+        SPI_exec(command, 0);
+        sprintf(command, "INSERT INTO datarephash_%d SELECT (n-1)/%d+1 AS id, min(x.hash) AS rephash, array_agg(x.id) AS idarray FROM (SELECT id, hash, row_number() OVER (order by hash) AS n FROM datahash_%d) x(id, hash, n) GROUP BY (n-1)/%d ORDER BY id;", 
+        i + 1, h, i + 1, h);
+        SPI_exec(command, 0);
+
+        // add b+ tree index
+        sprintf(command, "CREATE INDEX ix_rephash_%d ON datarephash_%d USING btree (rephash);", i + 1, i + 1);
+        SPI_exec(command, 0);
     }
     SPI_finish();
 }
@@ -308,12 +337,7 @@ fill_data_table(char *table_name, struct Data data)
     SPI_finish();
 }
 
-float 
-calc_l2_prob(	// calc prob <p1_> and <p2_> of L2 dist
-	float x)							// x = w / (2.0 * r)
-{
-	return new_gaussian_prob(x);
-}
+
 
 void
 insert_into_logs(int id, char * log) 
@@ -323,4 +347,27 @@ insert_into_logs(int id, char * log)
     sprintf(command, "INSERT INTO exe_logs VALUES (%d, '%s')", id, log);
     SPI_exec(command, 0);
     SPI_finish();
+}
+
+// -------------------------------------------------------------------------
+//  arguments: id of a query vector, k (top k vectors)
+// -------------------------------------------------------------------------
+Datum
+aknnqalsh_knn(PG_FUNCTION_ARGS)
+{
+    // -------------------------------------------------------------------------
+    //  aknnqalsh_knn function arguments
+    // -------------------------------------------------------------------------
+    int32 query_id;
+    int32 k;
+
+    // -------------------------------------------------------------------------
+    //  init aknnqalsh_knn function arguments
+    // -------------------------------------------------------------------------
+    query_id = PG_GETARG_INT32(0);
+    k = PG_GETARG_INT32(1);
+    
+
+
+
 }
