@@ -1,0 +1,326 @@
+#include "postgres.h"
+#include "fmgr.h"
+#include "executor/spi.h"
+#include "utils/builtins.h"
+#include "def.h"
+#include "random.h"
+#include "aknnqalshzkf.h"
+#include "util.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+PG_MODULE_MAGIC;
+
+// -----------------------------------------------------------------------------
+//  Constants
+// -----------------------------------------------------------------------------
+const int   TOPK[]         = { 1, 2, 5, 10, 20, 50, 100 };
+const int   MAX_ROUND      = 7;
+const int   MAXK           = TOPK[MAX_ROUND - 1];
+
+const float MAXREAL        = 3.402823466e+38F;
+const float MINREAL        = -MAXREAL;
+const int   MAXINT         = 2147483647;
+const int   MININT         = -MAXINT;
+
+const int   SIZEBOOL       = (int) sizeof(bool);
+const int   SIZECHAR       = (int) sizeof(char);
+const int   SIZEINT        = (int) sizeof(int);
+const int   SIZEFLOAT      = (int) sizeof(float);
+const int   SIZEDOUBLE     = (int) sizeof(double);
+
+const float E              = 2.7182818F;
+const float PI             = 3.141592654F;
+const float FLOATZERO      = 1e-6F;
+const float ANGLE          = PI / 8.0f;
+
+const int   CANDIDATES     = 100;
+
+// -----------------------------------------------------------------------------
+//  function prototypes
+// -----------------------------------------------------------------------------
+PG_FUNCTION_INFO_V1(aknnqalsh_index);
+Datum aknnqalsh_index(PG_FUNCTION_ARGS);
+void fill_data_struct_from_file(char *abs_path, struct Data *data_struct);
+void fill_data_table(char *table_name, struct Data data);
+void fill_param_table(char *dataset_name, int n, int d, float c, int m, int l);
+void build_datahash_i_tables(struct Data data, struct Data hash_functions);
+float calc_l2_prob(float);
+void insert_into_logs(int id, char * log);
+
+/* 
+数据集文件路径、查询集文件路径、 数据集名称、n、d、c、h
+void
+select aknnqalsh_index('/home/postgres/datasets/audio.data','/home/postgres/datasets/audio.data','audio', 54387, 192, 2, 200);
+*/
+Datum
+aknnqalsh_index(PG_FUNCTION_ARGS)
+{
+    // -------------------------------------------------------------------------
+    //  aknnqalsh_index function arguments
+    // -------------------------------------------------------------------------
+    char  *abs_path_data;
+    char  *abs_path_query;
+    char  *dataset_name;
+    int32  n;
+    int32  d;
+    float4 c;
+    int32  h;
+    
+    // -------------------------------------------------------------------------
+    //  util variables
+    // -------------------------------------------------------------------------
+    struct Data data_;
+    struct Data query_;
+    struct Data hash_functions_;
+    char *command_create_table_data_query_param;
+    
+    // -------------------------------------------------------------------------
+	//  parameters for QALSH
+	// -------------------------------------------------------------------------
+	int n_pts_;
+	int dim_;
+	int ratio_; // approximation ratio
+
+    // -------------------------------------------------------------------------
+    //  init aknnqalsh_index function arguments
+    // -------------------------------------------------------------------------
+    abs_path_data  = text_to_cstring(PG_GETARG_TEXT_PP(0));
+    abs_path_query = text_to_cstring(PG_GETARG_TEXT_PP(1));
+    dataset_name   = text_to_cstring(PG_GETARG_TEXT_PP(2));
+    n = PG_GETARG_INT32(3);
+    d = PG_GETARG_INT32(4);
+    c = PG_GETARG_FLOAT4(5);
+    h = PG_GETARG_INT32(6);
+
+    // -------------------------------------------------------------------------
+    //  create talbes: data, query, param, hashfuncs, exe_logs
+    // -------------------------------------------------------------------------
+    command_create_table_data_query_param = 
+    "DROP TABLE IF EXISTS data;\
+    DROP TABLE IF EXISTS query;\
+    DROP TABLE IF EXISTS param;\
+    DROP TABLE IF EXISTS hashfuncs;\
+    CREATE TABLE data (id int, coordinate real[]);\
+    CREATE TABLE query (id int, coordinate real[]);\
+    CREATE TABLE param (datasetname text, n int, d int, c real, m int, l int);\
+    CREATE TABLE hashfuncs (id int, hash_func real[])";
+    ereport(NOTICE,
+					(errmsg("creating tables: data, query, param, hashfuncs")));
+    SPI_connect();
+    SPI_exec(command_create_table_data_query_param, 0);
+    SPI_finish();
+    //insert_into_logs(1, "create tables");
+
+    // -------------------------------------------------------------------------
+    //  fill the struct Data data_ and data table
+    // -------------------------------------------------------------------------
+    fill_data_struct_from_file(abs_path_data, &data_);
+    fill_data_table("data", data_);
+    
+    // -------------------------------------------------------------------------
+    //  fill the struct Data query_ and query table
+    // -------------------------------------------------------------------------
+    fill_data_struct_from_file(abs_path_query, &query_);
+    fill_data_table("query", query_);
+    // -------------------------------------------------------------------------
+	//  init parameters for QALSH
+	// -------------------------------------------------------------------------
+	n_pts_ = n;
+	dim_   = d;
+	ratio_ = c; // approximation ratio
+
+	// -------------------------------------------------------------------------
+	//  init <w_> <m_> and <l_> (auto tuning-w)
+	//  
+	//  w0 ----- best w for L_{0.5} norm to minimize m (auto tuning-w)
+	//  w1 ----- best w for L_{1.0} norm to minimize m (auto tuning-w)
+	//  w2 ----- best w for L_{2.0} norm to minimize m (auto tuning-w)
+	//  other w: use linear combination for interpolation
+	// -------------------------------------------------------------------------
+	float delta = 1.0f / E;
+	float beta  = (float) CANDIDATES / (float) n_pts_;
+	float w2 = sqrt((8.0f * SQR(ratio_) * log(ratio_)) / (SQR(ratio_) - 1.0f));
+	float p1 = -1.0f, p2 = -1.0f;
+
+	int w_ = w2;
+	p1 = calc_l2_prob(w_ / 2.0f);
+	p2 = calc_l2_prob(w_ / (2.0f * ratio_));
+
+	float para1 = sqrt(log(2.0f / beta));
+	float para2 = sqrt(log(1.0f / delta));
+	float para3 = 2.0f * (p1 - p2) * (p1 - p2);
+	float eta   = para1 / para2;
+	float alpha = (eta * p1 + p2) / (1.0f + eta);
+
+	int m_ = (int) ceil( (para1 + para2) * (para1 + para2) / para3 );
+	int l_ = (int) ceil(alpha * m_);
+
+	// -------------------------------------------------------------------------
+	//  generate hash functions
+	// -------------------------------------------------------------------------
+    hash_functions_.n = m_;
+    hash_functions_.d = dim_;
+    hash_functions_.matrix = palloc(sizeof(float*) * m_);
+	for (int i = 0; i < m_; ++i) {
+        hash_functions_.matrix[i] = palloc(sizeof(float) * dim_);
+		for (int j = 0; j < dim_; ++j) {
+            hash_functions_.matrix[i][j] = gaussian(0.0f, 1.0f);
+		}
+	}
+
+	// -------------------------------------------------------------------------
+	//  fill the table param
+	// -------------------------------------------------------------------------
+    fill_param_table(dataset_name, n, d, c, m_, l_);
+    
+    // -------------------------------------------------------------------------
+	//  fill the table hashfuncs
+	// -------------------------------------------------------------------------
+    fill_data_table("hashfuncs", hash_functions_);
+    
+    // -------------------------------------------------------------------------
+	//  build datahash_i tables, i = [1: m]
+	// -------------------------------------------------------------------------
+    build_datahash_i_tables(data_, hash_functions_);
+    
+    
+    pfree(abs_path_data);
+    pfree(abs_path_query);
+    pfree(dataset_name);
+
+    PG_RETURN_INT32(n);
+}
+
+void
+build_datahash_i_tables(struct Data data, struct Data hash_functions)
+{
+    char command[1000];
+    int i, j;
+    float hash;
+    SPI_connect();
+    for (i = 0; i < hash_functions.n; i++)
+    {
+        sprintf(command, "DROP TABLE IF EXISTS datahash_%d; CREATE TABLE datahash_%d (id int, hash float);", i + 1, i + 1);
+        SPI_exec(command, 0);
+        // building datahash_i table
+        for (j = 0; j < data.n; j++)
+        {
+            hash = calc_inner_product(hash_functions.d, hash_functions.matrix[i], data.matrix[j]);
+            sprintf(command, "INSERT INTO datahash_%d VALUES (%d, %f)", i + 1, j + 1, hash);
+            SPI_exec(command, 0);
+        }
+    }
+    SPI_finish();
+}
+
+// -------------------------------------------------------------------------
+//  fill a matrix from a disk file
+// -------------------------------------------------------------------------
+void 
+fill_data_struct_from_file(char *abs_path, struct Data *data_struct)
+{
+    int header[3] = { 0 };
+    FILE* fr = fopen(abs_path, "rb");
+    if (!fr)
+    {
+        ereport(ERROR,
+            (errcode(ERRCODE_IO_ERROR),
+             errmsg("failed to open file %s\n", abs_path)));
+    }
+    fread(header, sizeof(int), sizeof(header) / sizeof(int), fr);
+    
+    data_struct->size_of_float = header[0];
+    data_struct->n = header[1];
+    data_struct->d = header[2];
+
+    data_struct->matrix = palloc(sizeof(float *) * data_struct->n);
+    for (int i = 0; i < data_struct->n; i++)
+    {
+        (data_struct->matrix)[i] = palloc(sizeof(float) * data_struct->d);
+    }
+    
+    // audio.data 是按列存储 fix me
+    for (int j = 0; j < data_struct->d; j++)
+    {
+        for (int i = 0; i < data_struct->n; i++)
+        {
+            fread(&( (data_struct->matrix)[i][j] ), data_struct->size_of_float, 1, fr);
+        }
+    }
+    
+    fclose(fr);
+}
+
+// -------------------------------------------------------------------------
+//  fill the param table
+// -------------------------------------------------------------------------
+void 
+fill_param_table(char *dataset_name, int n, int d, float c, int m, int l)
+{
+    ereport(NOTICE,
+					(errmsg("filling table: param")));
+    char command_insert[1000];
+    SPI_connect();
+    sprintf(command_insert, "INSERT INTO param VALUES ('%s', %d, %d, %f, %d, %d)", dataset_name, n, d, c, m, l);
+    SPI_exec(command_insert, 0);
+    SPI_finish();
+}
+
+// -------------------------------------------------------------------------
+//  fill a data table from a struct Data
+// -------------------------------------------------------------------------
+void
+fill_data_table(char *table_name, struct Data data)
+{
+    ereport(NOTICE,
+					(errmsg("filling table: \"%s\"", table_name)));
+    char one_vector_str[10000] = "["; // fix me
+    char one_float_str[100]; // fix me
+    int i, j;
+    float number;
+    char command_insert[1000];
+    
+    SPI_connect();
+    for (i = 0; i < data.n; i++)
+    {
+        one_vector_str[0] = '[';
+        one_vector_str[1] = '\0';
+        for (j = 0; j < data.d - 1; j++)
+        {
+            number = data.matrix[i][j];
+            sprintf(one_float_str, "%f", number);
+            strcat(one_vector_str, one_float_str);
+            strcat(one_vector_str, ",");
+        }
+        number = data.matrix[i][j];
+        sprintf(one_float_str, "%f", number);
+        strcat(one_vector_str, one_float_str);
+        strcat(one_vector_str, "]");
+
+        sprintf(command_insert, "INSERT INTO %s VALUES (%d, Array %s)", table_name, i + 1, one_vector_str);
+        // caution: the id of data table begin at 1, so use i + 1
+        SPI_exec(command_insert, 0);
+    }
+    
+    SPI_finish();
+}
+
+float 
+calc_l2_prob(	// calc prob <p1_> and <p2_> of L2 dist
+	float x)							// x = w / (2.0 * r)
+{
+	return new_gaussian_prob(x);
+}
+
+void
+insert_into_logs(int id, char * log) 
+{   
+    SPI_connect();
+    char command[300];
+    sprintf(command, "INSERT INTO exe_logs VALUES (%d, '%s')", id, log);
+    SPI_exec(command, 0);
+    SPI_finish();
+}
