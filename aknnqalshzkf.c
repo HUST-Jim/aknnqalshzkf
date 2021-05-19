@@ -55,6 +55,8 @@ void build_datahash_i_tables(struct Data data, struct Data hash_functions);
 void insert_into_logs(int id, char * log);
 void build_datarephash_i_tables(int m, int h);
 
+void read_hashfuncs(int m, int d, float *** hashfuncs);
+
 /* 
 数据集文件路径、查询集文件路径、 数据集名称、n、d、c、h
 void
@@ -372,8 +374,6 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     int ret;
     int proc;
     // about get an array from table
-    Datum		arrayDatum;
-    ArrayType  *r;
     /* SPI (input tuple) support */
 	SPITupleTable *tuptable;
 	HeapTuple	spi_tuple;
@@ -381,7 +381,8 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     char *raw_array_string;
     bool isnull;
     ArrayType *val;
-    float *din;
+    float *query_object;
+    float **hashfuncs;
     int			lenin;
 
     // -------------------------------------------------------------------------
@@ -400,6 +401,8 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
 
     /* init query buffer */
 	initStringInfo(&query_buf);
+    
+    /* 从 query 表中查出 query 对象的 coordinate */
     appendStringInfo(&query_buf, "SELECT coordinate FROM query WHERE id = %d", query_id);
     
     if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
@@ -407,7 +410,6 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
 			 query_buf.data);
     resetStringInfo(&query_buf);
 
-    
     proc = SPI_processed;
 	tuptable = SPI_tuptable;
     spi_tuple = tuptable->vals[0];
@@ -421,17 +423,15 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
 
     lenin = ArrayGetNItems(ARR_NDIM(val), ARR_DIMS(val));
     // elog(INFO, "==== len in: %d ====", lenin);
-    din = ( (float *) ARR_DATA_PTR(val) );
+    query_object = ( (float *) ARR_DATA_PTR(val) );
 
-    // for (int i = 0; i < lenin; i++)
-    //     elog(INFO, "%f,", din[i]);
+    //  for (int i = 0; i < lenin; i++)
+    //      elog(INFO, "%f,", query_coordinate[i]);
 
 
     // ---------------------------------------------------------------------
 	//  从 param 表中把参数读出来
 	// ---------------------------------------------------------------------
-    
-    
 
     /* get datasetname */
 	appendStringInfo(&query_buf, "SELECT datasetname FROM param");
@@ -511,9 +511,30 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     int l = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
     elog(INFO, "%d", l);
 
+
+    
+
+
     // -------------------------------------------------------------------------
     //  做range search， 找到 k 个最近邻
     // -------------------------------------------------------------------------
+    hashfuncs = palloc(sizeof(float *) * m);
+    for (int i = 0; i < m; i++)
+        hashfuncs[i] = palloc(sizeof(float) * d);
+    read_hashfuncs(m, d, &hashfuncs);
+    // 以上获取了 所有的 hash 函数
+
+    while (true)
+    {
+        for (int hash_func_id = 1; hash_func_id <= m; hash_func_id++)
+        {
+            float object_hash = calc_inner_product(d, hashfuncs[hash_func_id - 1], query_object);
+            // ----------------------------------------------------------------------------
+            //  查询数据表 datarephash_i 找到在 range 中的那些 id
+            // ----------------------------------------------------------------------------
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     //  将结果插入到query history表， 拼接返回值， 返回
@@ -523,120 +544,48 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     PG_RETURN_INT32(top_k);
 }
 
-// uint64_t r_knn(				// r-k-NN search
-// 	int   top_k,						// top-k value
-// 	float R,							// limited search range
-// 	const float *query,					// query object
-// 	const int   *object_id, 			// object id mapping
-// 	const char *data_folder,			// data folder
-// 	struct MinK_List *list)					// k-NN results (return)
-// {
-//     // ---------------------------------------------------------------------
-//     //  util variables
-//     // ---------------------------------------------------------------------
+void read_hashfuncs(int m, int d, float *** hashfuncs)
+{
+    // ---------------------------------------
+    //  util varaibles
+    int ret;
+    int proc;
+	SPITupleTable *tuptable;
+	HeapTuple	spi_tuple;
+	TupleDesc	spi_tupdesc;
+    bool isnull;
+    ArrayType *val;
+    float *tmp_hash_fun;
+    int lenin;
+    // ---------------------------------------
+
+    StringInfoData query_buf;
+    initStringInfo(&query_buf);
+
     
 
-//     int   *freq        = new int[n_pts_];
-// 	bool  *checked     = new bool[n_pts_];
-// 	bool  *bucket_flag = new bool[m_];
-// 	bool  *range_flag  = new bool[m_];
-// 	float *q_val       = new float[m_];
-// 	float *data        = new float[dim_];
-//     while (true) {
-// 		// ---------------------------------------------------------------------
-// 		//  step 1: initialize the stop condition for current round
-// 		// ---------------------------------------------------------------------
-// 		int num_bucket = 0;
-// 		memset(bucket_flag, true, m_ * sizeof(bool));
+    for (int i = 1; i <= m; i++) // fix me
+    {
+    // 读出第 i 个 hash function
+        appendStringInfo(&query_buf, "SELECT hash_func FROM hashfuncs WHERE id = %d", i);
+        if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+            elog(ERROR, "read_hashfuncs: SPI execution failed for query %s",
+                query_buf.data);
+        resetStringInfo(&query_buf);
+        proc = SPI_processed;
+	    tuptable = SPI_tuptable;
+        spi_tuple = tuptable->vals[0];
+	    spi_tupdesc = tuptable->tupdesc;
+    
+        val = DatumGetArrayTypeP(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
 
-// 		// ---------------------------------------------------------------------
-// 		//  step 2: find frequent objects
-// 		// ---------------------------------------------------------------------
-// 		while (num_bucket < m_ && num_range < m_) {
-// 			for (int i = 0; i < m_; ++i) {
-// 				if (!bucket_flag[i]) continue;
-
-// 				// -------------------------------------------------------------
-// 				//  step 2.1: compute <ldist> and <rdist>
-// 				// -------------------------------------------------------------
-// 				Page *lptr = lptrs[i];
-// 				Page *rptr = rptrs[i];
-
-// 				float ldist = MAXREAL;
-// 				float rdist = MAXREAL;
-// 				if (lptr->size_ != -1) ldist = calc_dist(q_val[i], lptr);
-// 				if (rptr->size_ != -1) rdist = calc_dist(q_val[i], rptr);
-
-// 				// -------------------------------------------------------------
-// 				//  step 2.2: determine the closer direction (left or right)
-// 				//  and do collision counting to find frequent objects.
-// 				//
-// 				//  for the frequent object, we calc the L2 distance with
-// 				//  query, and update the k-nn result.
-// 				// -------------------------------------------------------------
-// 				if (ldist < bucket && ldist < range && ldist <= rdist) {
-// 					int count = lptr->size_;
-// 					int end   = lptr->leaf_pos_;
-// 					int start = end - count;
-
-// 					for (int j = end; j > start; --j) {
-// 						int id = lptr->leaf_node_->get_entry_id(j);
-// 						if (++freq[id] > l_ && !checked[id]) {
-// 							checked[id] = true;
-// 							int oid = object_id[id];
-// 							read_data_new_format(oid, dim_, B_, data_folder, data);
-
-// 							float dist  = calc_lp_dist(dim_, p_, kdist, data, query);
-// 							kdist = list->insert(dist, oid);
-// 							if (++dist_io_ >= candidates) break;
-// 						}
-// 					}
-// 					update_left_buffer(rptr, lptr);
-// 				}
-// 				else if (rdist < bucket && rdist < range && ldist > rdist) {
-// 					int count = rptr->size_;
-// 					int start = rptr->leaf_pos_;
-// 					int end   = start + count;
-
-// 					for (int j = start; j < end; ++j) {
-// 						int id = rptr->leaf_node_->get_entry_id(j);
-// 						if (++freq[id] > l_ && !checked[id]) {
-// 							checked[id] = true;
-// 							int oid = object_id[id];
-// 							read_data_new_format(oid, dim_, B_, data_folder, data);
-
-// 							float dist  = calc_lp_dist(dim_, p_, kdist, data, query);
-// 							kdist = list->insert(dist, oid);
-// 							if (++dist_io_ >= candidates) break;
-// 						}
-// 					}
-// 					update_right_buffer(lptr, rptr);
-// 				}
-// 				else {
-// 					bucket_flag[i] = false;
-// 					num_bucket++;
-// 					if (ldist >= range && rdist >= range && range_flag[i]) {
-// 						range_flag[i] = false;
-// 						num_range++;
-// 					}
-// 				}
-// 				if (num_bucket >= m_ || num_range >= m_) break;
-// 				if (dist_io_ >= candidates) break;
-// 			}
-// 			if (num_bucket >= m_ || num_range >= m_) break;
-// 			if (dist_io_ >= candidates) break;
-// 		}
-// 		// ---------------------------------------------------------------------
-// 		//  step 3: stop conditions 1 & 2
-// 		// ---------------------------------------------------------------------
-// 		if (dist_io_ >= candidates || num_range >= m_) break;
-
-// 		// ---------------------------------------------------------------------
-// 		//  step 4: auto-update <radius>
-// 		// ---------------------------------------------------------------------
-// 		radius = update_radius(radius, q_val, (const Page**) lptrs, 
-// 			(const Page**) rptrs);
-// 		bucket = radius * w_ / 2.0f;
-// 	}
-//     return 0;
-// }
+        lenin = ArrayGetNItems(ARR_NDIM(val), ARR_DIMS(val));
+        // elog(INFO, "==== len in: %d ====", lenin);
+        tmp_hash_fun = ( (float *) ARR_DATA_PTR(val) );
+        for (int j = 0; j < d; j++)
+        {   
+            (*hashfuncs)[i-1][j] = tmp_hash_fun[j];
+            //elog(INFO, "hello %f", tmp_hash_fun[j]);
+        }
+    }
+}
