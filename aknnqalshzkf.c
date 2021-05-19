@@ -112,11 +112,11 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
     CREATE TABLE query (id int, coordinate real[]);\
     CREATE TABLE param (datasetname text, n int, d int, c real, m int, l int);\
     CREATE TABLE hashfuncs (id int, hash_func real[])";
-    ereport(NOTICE,
+    ereport(INFO,
 					(errmsg("creating tables: data, query, param, hashfuncs")));
     SPI_connect();
     SPI_exec(command_create_table_data_query_param, 0);
-    SPI_finish();
+    //SPI_finish();
     //insert_into_logs(1, "create tables");
 
     // -------------------------------------------------------------------------
@@ -124,12 +124,14 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
     // -------------------------------------------------------------------------
     fill_data_struct_from_file(abs_path_data, &data_);
     fill_data_table("data", data_);
+    SPI_exec("CREATE INDEX data_id ON data USING hash (id);", 0);
     
     // -------------------------------------------------------------------------
     //  fill the struct Data query_ and query table
     // -------------------------------------------------------------------------
     fill_data_struct_from_file(abs_path_query, &query_);
     fill_data_table("query", query_);
+    SPI_exec("CREATE INDEX query_id ON query USING hash (id);", 0);
     // -------------------------------------------------------------------------
 	//  init parameters for QALSH
 	// -------------------------------------------------------------------------
@@ -197,6 +199,7 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
     pfree(abs_path_query);
     pfree(dataset_name);
 
+    SPI_finish();
     PG_RETURN_INT32(n);
 }
 
@@ -206,7 +209,7 @@ build_datahash_i_tables(struct Data data, struct Data hash_functions)
     char command[1000];
     int i, j;
     float hash;
-    SPI_connect();
+    //SPI_connect();
     for (i = 0; i < hash_functions.n; i++)
     {
         sprintf(command, "DROP TABLE IF EXISTS datahash_%d; CREATE TABLE datahash_%d (id int, hash float);", i + 1, i + 1);
@@ -219,17 +222,17 @@ build_datahash_i_tables(struct Data data, struct Data hash_functions)
             SPI_exec(command, 0);
         }
     }
-    SPI_finish();
+    //SPI_finish();
 }
 
 void 
 build_datarephash_i_tables(int m, int h) // h: 每组聚合的向量个数
 {
-    //ereport(NOTICE,
+    //ereport(INFO,
 	//				(errmsg("building table: datarephash_%d")));
     char command[1000];
     int i;
-    SPI_connect();
+    //SPI_connect();
     for (i = 0; i < m; i++)
     {
         sprintf(command, "DROP TABLE IF EXISTS datarephash_%d; CREATE TABLE datarephash_%d (id int, rephash real, idarray int[])", i + 1, i + 1);
@@ -242,7 +245,7 @@ build_datarephash_i_tables(int m, int h) // h: 每组聚合的向量个数
         sprintf(command, "CREATE INDEX ix_rephash_%d ON datarephash_%d USING btree (rephash);", i + 1, i + 1);
         SPI_exec(command, 0);
     }
-    SPI_finish();
+    //SPI_finish();
 }
 
 // -------------------------------------------------------------------------
@@ -289,13 +292,13 @@ fill_data_struct_from_file(char *abs_path, struct Data *data_struct)
 void 
 fill_param_table(char *dataset_name, int n, int d, float c, int m, int l)
 {
-    ereport(NOTICE,
+    ereport(INFO,
 					(errmsg("filling table: param")));
     char command_insert[1000];
-    SPI_connect();
+    //SPI_connect();
     sprintf(command_insert, "INSERT INTO param VALUES ('%s', %d, %d, %f, %d, %d)", dataset_name, n, d, c, m, l);
     SPI_exec(command_insert, 0);
-    SPI_finish();
+    //SPI_finish();
 }
 
 // -------------------------------------------------------------------------
@@ -304,7 +307,7 @@ fill_param_table(char *dataset_name, int n, int d, float c, int m, int l)
 void
 fill_data_table(char *table_name, struct Data data)
 {
-    ereport(NOTICE,
+    ereport(INFO,
 					(errmsg("filling table: \"%s\"", table_name)));
     char one_vector_str[10000] = "["; // fix me
     char one_float_str[100]; // fix me
@@ -312,7 +315,7 @@ fill_data_table(char *table_name, struct Data data)
     float number;
     char command_insert[1000];
     
-    SPI_connect();
+    //SPI_connect();
     for (i = 0; i < data.n; i++)
     {
         one_vector_str[0] = '[';
@@ -334,7 +337,7 @@ fill_data_table(char *table_name, struct Data data)
         SPI_exec(command_insert, 0);
     }
     
-    SPI_finish();
+    //SPI_finish();
 }
 
 
@@ -342,15 +345,16 @@ fill_data_table(char *table_name, struct Data data)
 void
 insert_into_logs(int id, char * log) 
 {   
-    SPI_connect();
+    //SPI_connect();
     char command[300];
     sprintf(command, "INSERT INTO exe_logs VALUES (%d, '%s')", id, log);
     SPI_exec(command, 0);
-    SPI_finish();
+    //SPI_finish();
 }
 
 // -------------------------------------------------------------------------
-//  arguments: id of a query vector, k (top k vectors)
+//  Arguments: id of a query vector, k (top k vectors)
+//  Usage: SELECT aknnqalsh_knn(1, 1);
 // -------------------------------------------------------------------------
 Datum
 aknnqalsh_knn(PG_FUNCTION_ARGS)
@@ -359,15 +363,280 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     //  aknnqalsh_knn function arguments
     // -------------------------------------------------------------------------
     int32 query_id;
-    int32 k;
+    int32 top_k;
+
+    // -------------------------------------------------------------------------
+    //  util variables
+    // -------------------------------------------------------------------------
+    StringInfoData query_buf;
+    int ret;
+    int proc;
+    // about get an array from table
+    Datum		arrayDatum;
+    ArrayType  *r;
+    /* SPI (input tuple) support */
+	SPITupleTable *tuptable;
+	HeapTuple	spi_tuple;
+	TupleDesc	spi_tupdesc;
+    char *raw_array_string;
+    bool isnull;
+    ArrayType *val;
+    float *din;
+    int			lenin;
 
     // -------------------------------------------------------------------------
     //  init aknnqalsh_knn function arguments
     // -------------------------------------------------------------------------
     query_id = PG_GETARG_INT32(0);
-    k = PG_GETARG_INT32(1);
+    top_k = PG_GETARG_INT32(1);
+    
+    // -------------------------------------------------------------------------
+    //  查询数据表query 获得查询对象的coordinate 保存在一个array中 也保存在一个string中 用于后续查询sql的拼接
+    // -------------------------------------------------------------------------
+
+    /* spi connect */
+    if ((ret = SPI_connect()) < 0)
+		elog(ERROR, "aknnqalsh_knn: SPI_connect returned %d", ret);
+
+    /* init query buffer */
+	initStringInfo(&query_buf);
+    appendStringInfo(&query_buf, "SELECT coordinate FROM query WHERE id = %d", query_id);
+    
+    if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+
+    
+    proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    
+    //elog(INFO, "===== Before extract binary data =====");
+    /* Extract the row data as C Strings */
+    
+	//raw_array_string = SPI_getvalue(spi_tuple, spi_tupdesc, 1);
+    val = DatumGetArrayTypeP(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+
+    lenin = ArrayGetNItems(ARR_NDIM(val), ARR_DIMS(val));
+    // elog(INFO, "==== len in: %d ====", lenin);
+    din = ( (float *) ARR_DATA_PTR(val) );
+
+    // for (int i = 0; i < lenin; i++)
+    //     elog(INFO, "%f,", din[i]);
+
+
+    // ---------------------------------------------------------------------
+	//  从 param 表中把参数读出来
+	// ---------------------------------------------------------------------
+    
     
 
+    /* get datasetname */
+	appendStringInfo(&query_buf, "SELECT datasetname FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    char *datasetname = SPI_getvalue(spi_tuple, spi_tupdesc, 1);
+    elog(INFO, "%s", datasetname);
+    
+    /* get n */
+    appendStringInfo(&query_buf, "SELECT n FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    int n = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+    elog(INFO, "%d", n);
 
+    /* get d */
+    appendStringInfo(&query_buf, "SELECT d FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    int d = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+    elog(INFO, "%d", d);
 
+    /* get c */
+    appendStringInfo(&query_buf, "SELECT c FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    float c = DatumGetFloat4(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+    elog(INFO, "%f", c);
+
+    /* get m */
+    appendStringInfo(&query_buf, "SELECT m FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    int m = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+    elog(INFO, "%d", m);
+
+    /* get l */
+    appendStringInfo(&query_buf, "SELECT l FROM param");
+	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
+			 query_buf.data);
+    resetStringInfo(&query_buf);
+	proc = SPI_processed;
+	tuptable = SPI_tuptable;
+    spi_tuple = tuptable->vals[0];
+	spi_tupdesc = tuptable->tupdesc;
+    int l = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+    elog(INFO, "%d", l);
+
+    // -------------------------------------------------------------------------
+    //  做range search， 找到 k 个最近邻
+    // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    //  将结果插入到query history表， 拼接返回值， 返回
+    // -------------------------------------------------------------------------
+
+    SPI_finish();
+    PG_RETURN_INT32(top_k);
 }
+
+// uint64_t r_knn(				// r-k-NN search
+// 	int   top_k,						// top-k value
+// 	float R,							// limited search range
+// 	const float *query,					// query object
+// 	const int   *object_id, 			// object id mapping
+// 	const char *data_folder,			// data folder
+// 	struct MinK_List *list)					// k-NN results (return)
+// {
+//     // ---------------------------------------------------------------------
+//     //  util variables
+//     // ---------------------------------------------------------------------
+    
+
+//     int   *freq        = new int[n_pts_];
+// 	bool  *checked     = new bool[n_pts_];
+// 	bool  *bucket_flag = new bool[m_];
+// 	bool  *range_flag  = new bool[m_];
+// 	float *q_val       = new float[m_];
+// 	float *data        = new float[dim_];
+//     while (true) {
+// 		// ---------------------------------------------------------------------
+// 		//  step 1: initialize the stop condition for current round
+// 		// ---------------------------------------------------------------------
+// 		int num_bucket = 0;
+// 		memset(bucket_flag, true, m_ * sizeof(bool));
+
+// 		// ---------------------------------------------------------------------
+// 		//  step 2: find frequent objects
+// 		// ---------------------------------------------------------------------
+// 		while (num_bucket < m_ && num_range < m_) {
+// 			for (int i = 0; i < m_; ++i) {
+// 				if (!bucket_flag[i]) continue;
+
+// 				// -------------------------------------------------------------
+// 				//  step 2.1: compute <ldist> and <rdist>
+// 				// -------------------------------------------------------------
+// 				Page *lptr = lptrs[i];
+// 				Page *rptr = rptrs[i];
+
+// 				float ldist = MAXREAL;
+// 				float rdist = MAXREAL;
+// 				if (lptr->size_ != -1) ldist = calc_dist(q_val[i], lptr);
+// 				if (rptr->size_ != -1) rdist = calc_dist(q_val[i], rptr);
+
+// 				// -------------------------------------------------------------
+// 				//  step 2.2: determine the closer direction (left or right)
+// 				//  and do collision counting to find frequent objects.
+// 				//
+// 				//  for the frequent object, we calc the L2 distance with
+// 				//  query, and update the k-nn result.
+// 				// -------------------------------------------------------------
+// 				if (ldist < bucket && ldist < range && ldist <= rdist) {
+// 					int count = lptr->size_;
+// 					int end   = lptr->leaf_pos_;
+// 					int start = end - count;
+
+// 					for (int j = end; j > start; --j) {
+// 						int id = lptr->leaf_node_->get_entry_id(j);
+// 						if (++freq[id] > l_ && !checked[id]) {
+// 							checked[id] = true;
+// 							int oid = object_id[id];
+// 							read_data_new_format(oid, dim_, B_, data_folder, data);
+
+// 							float dist  = calc_lp_dist(dim_, p_, kdist, data, query);
+// 							kdist = list->insert(dist, oid);
+// 							if (++dist_io_ >= candidates) break;
+// 						}
+// 					}
+// 					update_left_buffer(rptr, lptr);
+// 				}
+// 				else if (rdist < bucket && rdist < range && ldist > rdist) {
+// 					int count = rptr->size_;
+// 					int start = rptr->leaf_pos_;
+// 					int end   = start + count;
+
+// 					for (int j = start; j < end; ++j) {
+// 						int id = rptr->leaf_node_->get_entry_id(j);
+// 						if (++freq[id] > l_ && !checked[id]) {
+// 							checked[id] = true;
+// 							int oid = object_id[id];
+// 							read_data_new_format(oid, dim_, B_, data_folder, data);
+
+// 							float dist  = calc_lp_dist(dim_, p_, kdist, data, query);
+// 							kdist = list->insert(dist, oid);
+// 							if (++dist_io_ >= candidates) break;
+// 						}
+// 					}
+// 					update_right_buffer(lptr, rptr);
+// 				}
+// 				else {
+// 					bucket_flag[i] = false;
+// 					num_bucket++;
+// 					if (ldist >= range && rdist >= range && range_flag[i]) {
+// 						range_flag[i] = false;
+// 						num_range++;
+// 					}
+// 				}
+// 				if (num_bucket >= m_ || num_range >= m_) break;
+// 				if (dist_io_ >= candidates) break;
+// 			}
+// 			if (num_bucket >= m_ || num_range >= m_) break;
+// 			if (dist_io_ >= candidates) break;
+// 		}
+// 		// ---------------------------------------------------------------------
+// 		//  step 3: stop conditions 1 & 2
+// 		// ---------------------------------------------------------------------
+// 		if (dist_io_ >= candidates || num_range >= m_) break;
+
+// 		// ---------------------------------------------------------------------
+// 		//  step 4: auto-update <radius>
+// 		// ---------------------------------------------------------------------
+// 		radius = update_radius(radius, q_val, (const Page**) lptrs, 
+// 			(const Page**) rptrs);
+// 		bucket = radius * w_ / 2.0f;
+// 	}
+//     return 0;
+// }

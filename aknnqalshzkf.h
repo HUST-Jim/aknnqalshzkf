@@ -14,6 +14,17 @@ struct Data
     float **matrix;
 };
 
+struct KnnResult
+{
+	float key; // aka hash value
+	int   id;
+};
 
+struct MinK_List
+{
+    int    k_;						// max numner of keys
+	int    num_;					// number of key current active
+	struct KnnResult *list_;		// the list itself
+};
 
 #endif
