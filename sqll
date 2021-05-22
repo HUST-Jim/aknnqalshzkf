@@ -2,3 +2,42 @@ INSERT INTO datarephash_1
 SELECT (n-1)/3+1 AS id, min(x.hash) AS rephash, array_agg(x.id) AS idarray 
     FROM (SELECT id, hash, row_number() OVER (order by hash) AS n FROM datahash_1) x(id, hash, n) GROUP BY (n-1)/3 
 ORDER BY id;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+在当前 datarephash 表中，找到在当前 range 之外，离 对象hash 最近的 那个 hash值
+用于更新下一轮的 radius
+
+WITH CTE
+    AS (
+        (
+            SELECT *
+            FROM datarephash_i
+            WHERE rephash >= range.rr
+            ORDER BY rephash ASC
+            LIMIT 1
+        )
+        UNION ALL
+        (
+            SELECT *
+            FROM datarephash_i
+            WHERE rephash <= range.ll
+            ORDER BY rephash DESC
+            LIMIT 1
+        )
+    )
+SELECT ABS(rephash - query_object_hash)
+FROM   CTE
+ORDER  BY ABS(rephash - query_object_hash) ASC LIMIT 1;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// brute force
+SELECT data.id as id, l2_distance(data.coordinate, query.coordinate) as distance 
+FROM data, query 
+WHERE query.id=1 
+ORDER BY l2_distance(data.coordinate, query.coordinate) 
+LIMIT 10;
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
