@@ -43,12 +43,12 @@ calc_l2_dist(// fix me if number is too big for square
 	for (int i = 0; i < dim; i++)
 	{
 		tmp[i] = p1[i] - p2[i];
-		elog(INFO, "p1[%d] = %f", i, p1[i]);
-		elog(INFO, "p2[%d] = %f", i, p2[i]);
-		elog(INFO, "tmp[%d] = %f", i, tmp[i]);
+		//elog(INFO, "p1[%d] = %f", i, p1[i]);
+		//elog(INFO, "p2[%d] = %f", i, p2[i]);
+		//elog(INFO, "tmp[%d] = %f", i, tmp[i]);
 	}
 	result = calc_inner_product(dim, tmp, tmp);
-	elog(INFO, "inner product = %f", result);
+	//elog(INFO, "inner product = %f", result);
 	pfree(tmp);
 	return sqrt(result);
 }
