@@ -27,9 +27,9 @@ struct MinK_List
 	struct KnnResult *list_;		// the list itself
 };
 
-float update_radius(float old_radius, const float *query_object_hashes, int m_, float ratio_, float w_);
+double update_radius(double old_radius, const float *query_object_hashes, int m_, float ratio_, float w_);
 
-float init_radius(const float *query_object_hashes, int m_, float ratio_, float w_);
+double init_radius(const float *query_object_hashes, int m_, float ratio_, float w_);
 
 void free_matrix(float ** matrix, int m);
 

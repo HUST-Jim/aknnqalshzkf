@@ -289,6 +289,9 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
 		}
 	}
 
+    elog(INFO, "======= 第一个hash函数是: %f ,..., %f", 
+    hash_functions_.matrix[0][0], hash_functions_.matrix[0][dim_-1]);
+
 	// -------------------------------------------------------------------------
 	//  fill the table param
 	// -------------------------------------------------------------------------
@@ -302,7 +305,10 @@ aknnqalsh_index(PG_FUNCTION_ARGS)
     // -------------------------------------------------------------------------
 	//  build datahash_i and datarephash_i tables, i = [1: m]
 	// -------------------------------------------------------------------------
+    
+    elog(INFO, "build_datahash_i_tables");
     build_datahash_i_tables(data_, hash_functions_);
+    elog(INFO, "build_datarephash_i_tables");
     build_datarephash_i_tables(m_, h);
     
     
@@ -323,13 +329,23 @@ build_datahash_i_tables(struct Data data, struct Data hash_functions)
     //SPI_connect();
     for (i = 0; i < hash_functions.n; i++)
     {
-        sprintf(command, "DROP TABLE IF EXISTS datahash_%d; CREATE TABLE datahash_%d (id int, hash float);", i + 1, i + 1);
+        sprintf(command, "DROP TABLE IF EXISTS datahash_%d; CREATE TABLE datahash_%d (id int, hash real);", i + 1, i + 1);
         SPI_exec(command, 0);
         // building datahash_i table
         for (j = 0; j < data.n; j++)
         {
             hash = calc_inner_product(hash_functions.d, hash_functions.matrix[i], data.matrix[j]);
             sprintf(command, "INSERT INTO datahash_%d VALUES (%d, %f)", i + 1, j + 1, hash);
+            if (i+1 == 1 && j+1 == 1)
+            {
+                elog(INFO, "======基本信息hash_functions.d = %d, data.d = %d, hash_functions.n = %d, data.n = %d", hash_functions.d, data.d, hash_functions.n, data.n);
+
+                for (int ii = 0; ii < hash_functions.d; ii++)
+                {
+                    elog(INFO, "data.matrix[j][ii] = %f, hash_functions.matrix[i][ii] = %f", data.matrix[j][ii], hash_functions.matrix[i][ii]);
+                }
+                
+            }
             SPI_exec(command, 0);
         }
     }
@@ -393,7 +409,19 @@ fill_data_struct_from_file(char *abs_path, struct Data *data_struct)
             fread(&( (data_struct->matrix)[i][j] ), data_struct->size_of_float, 1, fr);
         }
     }
+
+    for (int i = 0; i < data_struct->n; i++)
+    {
+        for (int j = 0; j < data_struct->d; j++)
+        {
+            /* code */
+            data_struct->matrix[i][j] = data_struct->matrix[i][j] * 1000; // 扩大 1000 倍,  fix me
+        }
+        
+    }
     
+    
+    elog(INFO, "========= finish reading file %s =========", abs_path);
     fclose(fr);
 }
 
@@ -418,8 +446,7 @@ fill_param_table(char *dataset_name, int n, int d, float c, int m, int l, float 
 void
 fill_data_table(char *table_name, struct Data data)
 {
-    ereport(INFO,
-					(errmsg("filling table: \"%s\"", table_name)));
+    ereport(INFO, (errmsg("filling table: \"%s\"", table_name)));
     char one_vector_str[10000] = "["; // fix me
     char one_float_str[100]; // fix me
     int i, j;
@@ -503,25 +530,6 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     // -------------------------------------------------------------------------
     query_id = PG_GETARG_INT32(0);
     top_k = PG_GETARG_INT32(1);
-    
-    // -------------------------------------------------------------------------
-    //  建立 result 表
-    // -------------------------------------------------------------------------
-    /* spi connect */
-    // if ((ret = SPI_connect()) < 0)
-	// 	elog(ERROR, "aknnqalsh_knn: SPI_connect returned %d", ret);
-
-    // /* init query buffer */
-	// initStringInfo(&query_buf);
-    
-    // /* create result table */
-    // appendStringInfo(&query_buf, "CREATE TABLE result (id int, data_id int, )");
-    
-    // if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT) 
-    //     elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s", query_buf.data);
-    // resetStringInfo(&query_buf);
-
-    // proc = SPI_processed;
 
     // -------------------------------------------------------------------------
     //  查询数据表query 获得查询对象的coordinate 保存在一个array中 也保存在一个string中 用于后续查询sql的拼接
@@ -535,7 +543,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
 	initStringInfo(&query_buf);
     
     /* 清空一下 results 表 */
-    appendStringInfo(&query_buf, "TRUNCATE results");
+    appendStringInfo(&query_buf, "DELETE from results");
     SPI_exec(query_buf.data, 0);
     resetStringInfo(&query_buf);
 
@@ -543,8 +551,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     appendStringInfo(&query_buf, "SELECT coordinate FROM query WHERE id = %d", query_id);
     
     if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
-		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
-			 query_buf.data);
+        elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s", query_buf.data);
     resetStringInfo(&query_buf);
 
     proc = SPI_processed;
@@ -563,9 +570,11 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     lenin = ArrayGetNItems(ARR_NDIM(raw_array), ARR_DIMS(raw_array));
     query_object = ( (float *) ARR_DATA_PTR(raw_array) );
 
-    //  for (int i = 0; i < lenin; i++)
-    //      elog(INFO, "%f,", query_coordinate[i]);
-
+    elog(INFO, "============= start print query object id = %d =============", query_id);
+    //for (int i = 0; i < lenin; i++)
+    elog(INFO, "query_object[0] = %f,", query_object[0]);
+    elog(INFO, "query_object[%d] = %f,", lenin-1, query_object[lenin-1]);
+    elog(INFO, "============= end print query object id = %d =============", query_id);
 
     // ---------------------------------------------------------------------
 	//  从 param 表中把参数读出来
@@ -574,28 +583,26 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     /* get datasetname */
 	appendStringInfo(&query_buf, "SELECT datasetname FROM param");
 	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
-		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
-			 query_buf.data);
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s", query_buf.data);
     resetStringInfo(&query_buf);
 	proc = SPI_processed;
 	tuptable = SPI_tuptable;
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     char *datasetname = SPI_getvalue(spi_tuple, spi_tupdesc, 1);
-    //elog(INFO, "datasetname: %s", datasetname);
+    elog(INFO, "datasetname: %s", datasetname);
     
     /* get n */
     appendStringInfo(&query_buf, "SELECT n FROM param");
 	if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
-		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s",
-			 query_buf.data);
+		elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s", query_buf.data);
     resetStringInfo(&query_buf);
 	proc = SPI_processed;
 	tuptable = SPI_tuptable;
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     int n = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "n(n_pts_): %d", n);
+    elog(INFO, "n(n_pts_): %d", n);
 
     /* get d */
     appendStringInfo(&query_buf, "SELECT d FROM param");
@@ -608,7 +615,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     int d = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "d(dim_): %d", d);
+    elog(INFO, "d(dim_): %d", d);
 
     /* get c */
     appendStringInfo(&query_buf, "SELECT c FROM param");
@@ -620,7 +627,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     float c = DatumGetFloat4(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "c(ratio_): %f", c);
+    elog(INFO, "c(ratio_): %f", c);
 
     /* get m */
     appendStringInfo(&query_buf, "SELECT m FROM param");
@@ -633,7 +640,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     int m = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "m(m_): %d", m);
+    elog(INFO, "m(m_): %d", m);
 
     /* get l */
     appendStringInfo(&query_buf, "SELECT l FROM param");
@@ -645,7 +652,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     int l = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "l(l_): %d", l);
+    elog(INFO, "l(l_): %d", l);
 
     /* get w */
     appendStringInfo(&query_buf, "SELECT w FROM param");
@@ -657,7 +664,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     float w = DatumGetFloat4(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "w(w_): %f", w);
+    elog(INFO, "w(w_): %f", w);
 
     // -------------------------------------------------------------------------
     //  做 range search， 找到 k 个最近邻
@@ -666,38 +673,43 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     for (int i = 0; i < m; i++)
         hashfuncs[i] = palloc(sizeof(float) * d);
     read_hashfuncs(m, d, &hashfuncs);
-    //elog(INFO, "======================== now printing the first hash fucntion ====================");
+    elog(INFO, "======================== start printing the first hash fucntion ====================");
     // for (int index_1 = 0; index_1 < m; index_1++)
     // {
     //     elog(INFO, "%f ", hashfuncs[0][index_1]);
     // }
-    //elog(INFO, "%f ", hashfuncs[0][0]);
-    //elog(INFO, "%f ", hashfuncs[0][d-1]);
-    //elog(INFO, "======================== end printing the first hash fucntion ====================");
+    elog(INFO, "%f ", hashfuncs[0][0]);
+    elog(INFO, "%f ", hashfuncs[0][d-1]);
+    elog(INFO, "======================== end printing the first hash fucntion ====================");
     // 以上获取了 所有的 hash 函数
 
     // -----------------------------------------------------------------------------------------
     //  计算 对象 的 m 个 hash 值
+    
     query_object_hashes = palloc(sizeof(float) * m);
     for (int i = 0; i < m; i++)
-        query_object_hashes[i] = calc_inner_product(d, hashfuncs[i], query_object);
-    //elog(INFO, "======================== 开始：打印查询对象的 hash 值 ====================");
-    // for (int index_1 = 0; index_1 < m; index_1++)
-    // {
-    //     elog(INFO, "%f ", query_object_hashes[index_1]);
-    // }
-    //elog(INFO, "%f ", query_object_hashes[0]);
-    //elog(INFO, "%f ", query_object_hashes[m-1]);
-    //elog(INFO, "======================== 结束：打印查询对象的 hash 值 ====================");
+    {
+        float tmp_hash = calc_inner_product(d, hashfuncs[i], query_object);
+        elog(INFO, "计算查询对象的第 %d 个hash = %f", i, tmp_hash);
+        query_object_hashes[i] = tmp_hash;
+    }
+    elog(INFO, "======================== 开始：打印查询对象的 hash 值 ====================");
+    
+    for (int index_1 = 0; index_1 < m; index_1++)
+    {
+        elog(INFO, "查询对象的第 %d 个hash : %f ", index_1, query_object_hashes[index_1]);
+    }
+    
+    elog(INFO, "======================== 结束：打印查询对象的 hash 值 ====================");
     // // -----------------------------------------------------------------------------------------
 
     frequency = palloc(sizeof(int) * n);
     memset(frequency, 0, sizeof(int) * n);
-    float radius = init_radius(query_object_hashes, m, c, w);
-    float old_radius = 0;
-    //elog(INFO, "==========================================================");
-    //elog(INFO, "====================init radius is %f=============================", radius);
-    //elog(INFO, "==========================================================");
+    double radius = init_radius(query_object_hashes, m, c, w);
+    double old_radius = 0;
+    elog(INFO, "==========================================================");
+    elog(INFO, "====================init radius is %f=============================", radius);
+    elog(INFO, "==========================================================");
     int   max_num_of_candidates = CANDIDATES + top_k - 1;
     int   *candidate_list = palloc(SIZEINT * max_num_of_candidates);      // 用来存 频繁碰撞对象 的 id
     int   num_of_candidates = 0;
@@ -709,11 +721,14 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     
     bool  flag = false;
 
+    int round = 0;
     while (true)
     {
-
-        //elog(INFO, "==================== 本轮 radius: %f ========================", radius);
-        
+        //if (round > 5) break;
+        round++;
+        elog(INFO, "==================== 第 %d 轮 radius: %f ========================", round, radius);
+        elog(INFO, "==================== 第 %d 轮 old_radius: %f ========================", round, old_radius);
+        elog(INFO, "==================== 第 %d 轮 实际半径: %f ========================", round, radius * w / 2.0f);
         for (int hash_func_id = 1; hash_func_id <= m; hash_func_id++)
         {
         // 对于每一张 hash 表
@@ -727,15 +742,18 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
                 hash_func_id, 
                 query_object_hash - (w * radius / 2.0f), 
                 query_object_hash - (w * old_radius / 2.0f), 
-                query_object_hash + (w * radius / 2.0f),
-                query_object_hash + (w * old_radius / 2.0f)
+                query_object_hash + (w * old_radius / 2.0f),
+                query_object_hash + (w * radius / 2.0f)
                 );
 	        if ((ret = SPI_exec(query_buf.data, 0)) != SPI_OK_SELECT)
 		        elog(ERROR, "aknnqalsh_knn: SPI execution failed for query %s", query_buf.data);
-            resetStringInfo(&query_buf);
+            
             
             proc = SPI_processed;
-            //elog(INFO, "第%d个哈希表，返回 idarray 结果个数是 %d", hash_func_id, proc);
+            elog(INFO, "第%d个哈希表，返回 idarray 结果个数是 %d", hash_func_id, proc);
+            if (proc == 0)
+                elog(INFO, "%s", query_buf.data);
+            resetStringInfo(&query_buf);
 	        tuptable = SPI_tuptable;
             
             if (proc <= 0)
@@ -800,7 +818,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
         
                         raw_array = DatumGetArrayTypeP(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
                         float *possible_good = ( (float *) ARR_DATA_PTR(raw_array) );
-                        float tmp_dis = calc_l2_dist(d, query_object, possible_good);
+                        float tmp_dis = calc_l2_dist(d, query_object, possible_good); // fix me
 
                         // 当前对象加入到 candidate 集中
                         candidate_list[num_of_candidates] = curr_id;
@@ -809,6 +827,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
                         
                         if ( num_of_candidates >= max_num_of_candidates )
                         {
+                            elog(INFO, "有足够多的 candidate");
                             flag = true;
                             break;
                         }
@@ -823,6 +842,7 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
                             if ( num_of_results >= top_k )
                             {
                                 flag = true;
+                                elog(INFO, "有足够多的 result");
                                 break;
                             }
                         }
@@ -836,6 +856,8 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
         
         old_radius = radius;
         radius = update_radius(radius, query_object_hashes, m, c, w);
+        if (radius < FLOATZERO)
+            radius = w * c / 2;
     }
 
     
@@ -845,9 +867,9 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
     // -------------------------------------------------------------------------
     if (num_of_results >= top_k)
     {
-        //elog(INFO, "-------------------------------------------------------------------------");
-        //elog(INFO, "result_list 满了");
-        //elog(INFO, "-------------------------------------------------------------------------");
+        elog(INFO, "-------------------------------------------------------------------------");
+        elog(INFO, "result_list 满了");
+        elog(INFO, "-------------------------------------------------------------------------");
         // 通过 result_list, result_distance_list 构建结果
         for (int i = 0; i < num_of_results; i++)
         {
@@ -862,9 +884,9 @@ aknnqalsh_knn(PG_FUNCTION_ARGS)
         }
     } else
     {
-        //elog(INFO, "-------------------------------------------------------------------------");
-        //elog(INFO, "candidate_list 满了");
-        //elog(INFO, "-------------------------------------------------------------------------");
+        elog(INFO, "-------------------------------------------------------------------------");
+        elog(INFO, "candidate_list 满了");
+        elog(INFO, "-------------------------------------------------------------------------");
         // 通过 candidate_list, candidate_distance_list 构建结果
         for (int i = 0; i < num_of_candidates; i++)
         {
@@ -946,23 +968,22 @@ read_hashfuncs(int m, int d, float *** hashfuncs)
     }
 }
 
-
-float 
-update_radius(float old_radius, const float *query_object_hashes, int m_, float ratio_, float w_)
+double
+update_radius(double old_radius, const float *query_object_hashes, int m_, float ratio_, float w_)
 {
-    char command[1024];
-    int ret, proc;
-    SPITupleTable *tuptable;
-	HeapTuple	spi_tuple;
-	TupleDesc	spi_tupdesc;
-    bool isnull;
+    char           command[1024];
+    int            ret, proc;
+    SPITupleTable  *tuptable;
+	HeapTuple      spi_tuple;
+	TupleDesc      spi_tupdesc;
+    bool           isnull;
     // -------------------------------------------------------------------------
 	//  find an array of projected distance which is closest to the query in
 	//  each of <m> hash tables 
 	// -------------------------------------------------------------------------
     
     //elog(INFO, "==================== old_radius: %f ========================", old_radius);
-    float *list = palloc(sizeof(float) * m_);
+    double *list = palloc(sizeof(double) * m_);
 	for (int i = 0; i < m_; i++)
     {
 		sprintf(command, LONG_SQL_UPDATE_RADIUS, 
@@ -974,37 +995,41 @@ update_radius(float old_radius, const float *query_object_hashes, int m_, float 
         if ((ret = SPI_exec(command, 0)) != SPI_OK_SELECT)
             elog(ERROR, "updata_radius: SPI execution failed for query %s", command);
         proc = SPI_processed;
-        if (proc != 1) 
-            elog(ERROR, "updata_radius: no result from query: %s", command);
+        if (proc != 1)
+            elog(ERROR, "updata_radius: no result from query: %s, proc = %d", command, proc);
         // fix me 假如没有查到怎么办? 会出现这种情况吗?
         tuptable = SPI_tuptable;
         spi_tuple = tuptable->vals[0];
 	    spi_tupdesc = tuptable->tupdesc;
-        float di = (float) DatumGetFloat8(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
+        double di = (double) DatumGetFloat8(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
         // 由于上面的 SQL 返回的是 pg 的 double 类型，需要强转为 float
         
-        // #ifdef __DEBUG
-        // if (old_radius == 0)
+        #ifdef __DEBUG
+        //if (old_radius == 0)
         // {
         //     elog(INFO, "// ------------------- 打印一个 di ------------------------------------------------------");
         //     elog(INFO, "d %d: %f", i, di);
         //     elog(INFO, "// ------------------- 打印生成这个 di 的sql ------------------------------------------------------");
         //     elog(INFO, "%s", command);
         // }
-        // #endif
+        #endif
         
         list[i] = di;
 	}
-
+    
+    // elog(INFO, "// ------------------- 开始 打印未排序的 di ------------------------------------------------------");
+    // for (int i = 0; i < m_; i++)
+    //     elog(INFO, "d %d: %f", i, list[i]);
+    // elog(INFO, "// ------------------- 结束 打 di ------------------------------------------------------");
 
 	qsort((void *) list, m_, sizeof(list[0]), compare_float_helper);
 
-    // #ifdef __DEBUG
-    // elog(INFO, "// ------------------- 开始 打印排序好的 di ------------------------------------------------------");
-    // for (int i = 0; i < m_; i++)
-    //     elog(INFO, "d %d: %f", i, list[i]);
-    // elog(INFO, "// ------------------- 结束 打印排序好的 di ------------------------------------------------------");
-    // #endif
+    #ifdef __DEBUG
+    elog(INFO, "// ------------------- 开始 打印排序好的 di ------------------------------------------------------");
+    for (int i = 0; i < m_; i++)
+        elog(INFO, "d %d: %f", i, list[i]);
+    elog(INFO, "// ------------------- 结束 打印排序好的 di ------------------------------------------------------");
+    #endif
 
     // -------------------------------------------------------------------------
 	//  find the median distance and return the new radius
@@ -1012,9 +1037,9 @@ update_radius(float old_radius, const float *query_object_hashes, int m_, float 
 	// int num = (int) list.size();
 	// if (num == 0) return ratio_ * old_radius;
 
-    //elog(INFO, "// --------------------------------- m_: %d ----------------------------------------", m_);
-	float dist = list[m_ / 2];
-    //elog(INFO, "// --------------------------------- list[m_/2]: %f ----------------------------------------", dist);
+    elog(INFO, "// --------------------------------- m_: %d ----------------------------------------", m_);
+	double dist = list[m_ / 2];
+    elog(INFO, "// --------------------------------- list[m_/2]: %f ----------------------------------------", dist);
 	// if (num % 2 == 0) dist = (list[num / 2 - 1] + list[num / 2]) / 2.0f;
 	// else dist = list[num / 2];
 	
@@ -1030,7 +1055,7 @@ update_radius(float old_radius, const float *query_object_hashes, int m_, float 
 // ------------------------------------------------------
 //  Calculate the radius for the first time
 // ------------------------------------------------------
-float 
+double
 init_radius(const float *query_object_hashes, int m_, float ratio_, float w_)
 {
     return  update_radius(0, query_object_hashes,m_, ratio_, w_);

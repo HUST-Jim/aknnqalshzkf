@@ -63,8 +63,8 @@ calc_l2_prob(	// calc prob <p1_> and <p2_> of L2 dist
 int 
 compare_float_helper(const void *a, const void *b) // needed by qsort
 {
-    float c = *(float *)a;
-    float d = *(float *)b;
+    double c = *(double *)a;
+    double d = *(double *)b;
     if (c < d)
 		return -1;
 	else if (c == d)
