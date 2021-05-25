@@ -13,6 +13,3 @@ CREATE FUNCTION pg_qalsh_knn (int, int) RETURNS int
 AS 'MODULE_PATHNAME', 'pg_qalsh_knn'
 LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION pg_qalsh_insert_data (int, real[]) RETURNS void
-AS 'MODULE_PATHNAME', 'pg_qalsh_isert_data'
-LANGUAGE C IMMUTABLE STRICT;

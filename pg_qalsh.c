@@ -48,9 +48,11 @@ const int   CANDIDATES     = 100; // fix me
 PG_FUNCTION_INFO_V1(pg_qalsh_index);
 PG_FUNCTION_INFO_V1(pg_qalsh_knn);
 PG_FUNCTION_INFO_V1(l2_distance);
+PG_FUNCTION_INFO_V1(pg_qalsh_insert_data);
 Datum pg_qalsh_index(PG_FUNCTION_ARGS);
 Datum pg_qalsh_knn(PG_FUNCTION_ARGS);
 Datum l2_distance(PG_FUNCTION_ARGS);
+Datum pg_qalsh_insert_data(PG_FUNCTION_ARGS);
 void fill_data_struct_from_file(char *abs_path, struct Data *data_struct, bool store_by_colum);
 void fill_data_table(char *table_name, struct Data data);
 void fill_param_table(char *dataset_name, int n, int d, float c, int m, int l, float w);
@@ -84,6 +86,10 @@ void read_hashfuncs(int m, int d, float *** hashfuncs);
 //     float **hashfuncs;
 //     int			lenin;
 // }
+
+Datum
+pg_qalsh_insert_data(PG_FUNCTION_ARGS)
+{}
 
 Datum
 l2_distance(PG_FUNCTION_ARGS)
