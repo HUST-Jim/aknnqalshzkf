@@ -5,7 +5,6 @@
 
 #include <math.h>
 
-
 /* 返回给定对象在数组中的位置，没有找到则返回 -1 */
 int
 num_in_array(int num, int array[], int array_len)

@@ -1,5 +1,5 @@
-#ifndef __AKNNQALSHZKF_H
-#define __AKNNQALSHZKF_H
+#ifndef __PGQALSH_H
+#define __PGQALSH_H
 
 // -----------------------------------------------------------------------------
 //  long SQLs

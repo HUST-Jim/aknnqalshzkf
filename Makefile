@@ -1,13 +1,12 @@
-# aknnqalshzkf/Makefile
+# pg_qalsh/Makefile
 
-MODULE_big = aknnqalshzkf
-EXTENSION = aknnqalshzkf      # the extensions name
-DATA = aknnqalshzkf--1.0.sql  # script files to install
-OBJS = aknnqalshzkf.o random.o util.o
-REGRESS = aknnqalshzkf
+MODULE_big = pg_qalsh
+EXTENSION = pg_qalsh      # the extensions name
+DATA = pg_qalsh--1.0.sql  # script files to install
+OBJS = pg_qalsh.o random.o util.o
+REGRESS = pg_qalsh
 PG_CFLAGS += -lm
 PG_CFLAGS += -std=c99
-PG_CFLAGS += -DDEBUG
 
 # postgres build stuff
 PG_CONFIG = pg_config
