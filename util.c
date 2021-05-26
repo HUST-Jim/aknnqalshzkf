@@ -37,7 +37,7 @@ calc_l2_dist(// fix me if number is too big for square
 	const float *p1,
 	const float *p2)
 {
-	float *tmp = palloc(sizeof(float) * dim);
+	float *tmp = palloc0(sizeof(float) * dim);
 	float result;
 	for (int i = 0; i < dim; i++)
 	{

@@ -263,9 +263,9 @@ pg_qalsh_index(PG_FUNCTION_ARGS)
 	// -------------------------------------------------------------------------
     hash_functions_.n = m_;
     hash_functions_.d = dim_;
-    hash_functions_.matrix = palloc(sizeof(float*) * m_);
+    hash_functions_.matrix = palloc0(sizeof(float*) * m_);
 	for (int i = 0; i < m_; ++i) {
-        hash_functions_.matrix[i] = palloc(sizeof(float) * dim_);
+        hash_functions_.matrix[i] = palloc0(sizeof(float) * dim_);
 		for (int j = 0; j < dim_; ++j) {
             hash_functions_.matrix[i][j] = gaussian(0.0f, 1.0f);
 		}
@@ -377,10 +377,10 @@ fill_data_struct_from_file(char *abs_path, struct Data *data_struct, bool store_
     data_struct->n = header[1];
     data_struct->d = header[2];
 
-    data_struct->matrix = palloc(sizeof(float *) * data_struct->n);
+    data_struct->matrix = palloc0(sizeof(float *) * data_struct->n);
     for (int i = 0; i < data_struct->n; i++)
     {
-        (data_struct->matrix)[i] = palloc(sizeof(float) * data_struct->d);
+        (data_struct->matrix)[i] = palloc0(sizeof(float) * data_struct->d);
     }
     
     if (store_by_column)
@@ -403,6 +403,7 @@ fill_data_struct_from_file(char *abs_path, struct Data *data_struct, bool store_
         }
     }
 
+    
     for (int i = 0; i < data_struct->n; i++)
     {
         for (int j = 0; j < data_struct->d; j++)
@@ -563,11 +564,11 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
     lenin = ArrayGetNItems(ARR_NDIM(raw_array), ARR_DIMS(raw_array));
     query_object = ( (float *) ARR_DATA_PTR(raw_array) );
 
-    //elog(INFO, "============= start print query object id = %d =============", query_id);
-    //for (int i = 0; i < lenin; i++)
-    //elog(INFO, "query_object[0] = %f,", query_object[0]);
-    //elog(INFO, "query_object[%d] = %f,", lenin-1, query_object[lenin-1]);
-    //elog(INFO, "============= end print query object id = %d =============", query_id);
+    // elog(INFO, "============= start print query object id = %d =============", query_id);
+    // //for (int i = 0; i < lenin; i++)
+    // elog(INFO, "query_object[0] = %f,", query_object[0]);
+    // elog(INFO, "query_object[%d] = %f,", lenin-1, query_object[lenin-1]);
+    // elog(INFO, "============= end print query object id = %d =============", query_id);
 
     // ---------------------------------------------------------------------
 	//  从 param 表中把参数读出来
@@ -583,7 +584,7 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     char *datasetname = SPI_getvalue(spi_tuple, spi_tupdesc, 1);
-    //elog(INFO, "datasetname: %s", datasetname);
+//    elog(INFO, "datasetname: %s", datasetname);
     
     /* get n */
     appendStringInfo(&query_buf, "SELECT n FROM param");
@@ -595,7 +596,7 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
     spi_tuple = tuptable->vals[0];
 	spi_tupdesc = tuptable->tupdesc;
     int n = DatumGetInt32(SPI_getbinval(spi_tuple, spi_tupdesc, 1, &isnull));
-    //elog(INFO, "n(n_pts_): %d", n);
+//    elog(INFO, "n(n_pts_): %d", n);
 
     /* get d */
     appendStringInfo(&query_buf, "SELECT d FROM param");
@@ -662,53 +663,53 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
     // -------------------------------------------------------------------------
     //  做 range search， 找到 k 个最近邻
     // -------------------------------------------------------------------------
-    hashfuncs = palloc(sizeof(float *) * m);
+    hashfuncs = palloc0(sizeof(float *) * m);
     for (int i = 0; i < m; i++)
-        hashfuncs[i] = palloc(sizeof(float) * d);
+        hashfuncs[i] = palloc0(sizeof(float) * d);
     read_hashfuncs(m, d, &hashfuncs);
-    //elog(INFO, "======================== start printing the first hash fucntion ====================");
-    // for (int index_1 = 0; index_1 < m; index_1++)
-    // {
-    //     elog(INFO, "%f ", hashfuncs[0][index_1]);
-    // }
-    //elog(INFO, "%f ", hashfuncs[0][0]);
-    //elog(INFO, "%f ", hashfuncs[0][d-1]);
-    //elog(INFO, "======================== end printing the first hash fucntion ====================");
+    // elog(INFO, "======================== start printing the first hash fucntion ====================");
+    // // for (int index_1 = 0; index_1 < m; index_1++)
+    // // {
+    // //     elog(INFO, "%f ", hashfuncs[0][index_1]);
+    // // }
+    // elog(INFO, "%f ", hashfuncs[0][0]);
+    // elog(INFO, "%f ", hashfuncs[0][d-1]);
+    // elog(INFO, "======================== end printing the first hash fucntion ====================");
     // 以上获取了 所有的 hash 函数
 
     // -----------------------------------------------------------------------------------------
     //  计算 对象 的 m 个 hash 值
     
-    query_object_hashes = palloc(sizeof(float) * m);
+    query_object_hashes = palloc0(sizeof(float) * m);
     for (int i = 0; i < m; i++)
     {
-        //elog(INFO, "计算查询对象的第 %d 个hash = %f", i, tmp_hash);
+    //    elog(INFO, "计算查询对象的第 %d 个hash = %f", i, calc_inner_product(d, hashfuncs[i], query_object));
         query_object_hashes[i] = calc_inner_product(d, hashfuncs[i], query_object);
     }
 
-    // elog(INFO, "======================== 开始：打印查询对象的 hash 值 ====================");
+    //elog(INFO, "======================== 开始：打印查询对象的 hash 值 ====================");
     // for (int index_1 = 0; index_1 < m; index_1++)
     // {
     //     elog(INFO, "查询对象的第 %d 个hash : %f ", index_1, query_object_hashes[index_1]);
     // }
     // elog(INFO, "======================== 结束：打印查询对象的 hash 值 ====================");
-    // // -----------------------------------------------------------------------------------------
+    // -----------------------------------------------------------------------------------------
 
-    frequency = palloc(sizeof(int) * n);
-    memset(frequency, 0, sizeof(int) * n);
+    frequency = palloc0(sizeof(int) * n);
+    //memset(frequency, 0, sizeof(int) * n);
     double radius = init_radius(query_object_hashes, m, c, w);
     double old_radius = 0;
     // elog(INFO, "==========================================================");
     // elog(INFO, "====================init radius is %f=============================", radius);
     // elog(INFO, "==========================================================");
     int   max_num_of_candidates = CANDIDATES + top_k - 1;
-    int   *candidate_list = palloc(SIZEINT * max_num_of_candidates);      // 用来存 频繁碰撞对象 的 id
+    int   *candidate_list = palloc0(SIZEINT * max_num_of_candidates);      // 用来存 频繁碰撞对象 的 id
     int   num_of_candidates = 0;
-    float *candidate_distance_list = palloc(SIZEFLOAT * max_num_of_candidates);
+    float *candidate_distance_list = palloc0(SIZEFLOAT * max_num_of_candidates);
     
-    int   *result_list = palloc(SIZEINT * top_k);         // 用来存 满足|o - q| <= R * c 对象 的 id
+    int   *result_list = palloc0(SIZEINT * top_k);         // 用来存 满足|o - q| <= R * c 对象 的 id
     int   num_of_results = 0;
-    float *result_distance_list = palloc(SIZEFLOAT * top_k);
+    float *result_distance_list = palloc0(SIZEFLOAT * top_k);
     
     bool  flag = false;
 
@@ -741,7 +742,7 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
             
             
             proc = SPI_processed;
-            // elog(INFO, "第%d个哈希表，返回 idarray 结果个数是 %d", hash_func_id, proc);
+            //elog(INFO, "第%d个哈希表，返回 idarray 结果个数是 %d", hash_func_id, proc);
             // if (proc == 0)
             //     elog(INFO, "%s", query_buf.data);
             resetStringInfo(&query_buf);
@@ -760,7 +761,7 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
                 //char * raw_array_str = SPI_getvalue(spi_tuple, spi_tupdesc, 1);
                 //elog(INFO, raw_array_str);
                 lenin = ArrayGetNItems(ARR_NDIM(raw_array), ARR_DIMS(raw_array));
-                //elog(INFO, "lenin : %d", lenin);
+                //elog(INFO, "idarray lenin : %d", lenin);
                 curr_idarray = ( (int *) ARR_DATA_PTR(raw_array) );
                 
                 for (int j = 0; j < lenin; j++)
@@ -839,28 +840,32 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
                         }
                     }
                 }
+                //elog(INFO, "tiaochu1");
                 if (flag) break;
             }
+            //elog(INFO, "tiaochu2");
             if (flag) break;
         }
+        //elog(INFO, "tiaochu3");
         if (flag) break;
-        
+        //elog(INFO, "zheli?");
         old_radius = radius;
         radius = update_radius(radius, query_object_hashes, m, c, w);
         if (radius < FLOATZERO)
             radius = w * c / 2;
     }
+    //elog(INFO, "tiaochu4");
 
     
 
     // -------------------------------------------------------------------------
-    //  将结果插入到 results 表
+    // 将结果插入到 results 表
     // -------------------------------------------------------------------------
     if (num_of_results >= top_k)
     {
-        //elog(INFO, "-------------------------------------------------------------------------");
-        //elog(INFO, "result_list 满了");
-        //elog(INFO, "-------------------------------------------------------------------------");
+        // elog(INFO, "-------------------------------------------------------------------------");
+        // elog(INFO, "result_list 满了");
+        // elog(INFO, "-------------------------------------------------------------------------");
         // 通过 result_list, result_distance_list 构建结果
         for (int i = 0; i < num_of_results; i++)
         {
@@ -875,9 +880,9 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
         }
     } else
     {
-        //elog(INFO, "-------------------------------------------------------------------------");
-        //elog(INFO, "candidate_list 满了");
-        //elog(INFO, "-------------------------------------------------------------------------");
+        // elog(INFO, "-------------------------------------------------------------------------");
+        // elog(INFO, "candidate_list 满了");
+        // elog(INFO, "-------------------------------------------------------------------------");
         // 通过 candidate_list, candidate_distance_list 构建结果
         for (int i = 0; i < num_of_candidates; i++)
         {
@@ -900,11 +905,11 @@ pg_qalsh_knn(PG_FUNCTION_ARGS)
     }
     
 
-    pfree(frequency);
     pfree(result_list);
     pfree(result_distance_list);
     pfree(candidate_list);
     pfree(candidate_distance_list);
+    pfree(frequency);
     pfree(query_object_hashes);
 
     free_matrix(hashfuncs, m);
@@ -973,7 +978,7 @@ update_radius(double old_radius, const float *query_object_hashes, int m_, float
 	// -------------------------------------------------------------------------
     
     //elog(INFO, "==================== old_radius: %f ========================", old_radius);
-    double *list = palloc(sizeof(double) * m_);
+    double *list = palloc0(sizeof(double) * m_);
 	for (int i = 0; i < m_; i++)
     {
 		sprintf(command, LONG_SQL_UPDATE_RADIUS, 

@@ -36,7 +36,7 @@ SELECT data.id as id, l2_distance(data.coordinate, query.coordinate) as distance
 FROM data, query 
 WHERE query.id=1 
 ORDER BY l2_distance(data.coordinate, query.coordinate) 
-LIMIT 10;
+LIMIT 1;
 
 
 
@@ -45,3 +45,19 @@ LIMIT 10;
 CREATE FUNCTION pg_qalsh_insert_data (int, real[]) RETURNS void
 AS 'MODULE_PATHNAME', 'pg_qalsh_isert_data'
 LANGUAGE C IMMUTABLE STRICT;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+计算总体比率，注意返回值需要再除以 k
+
+WITH brute AS (
+SELECT id, distance, row_number() OVER () as newid 
+FROM 
+(SELECT data.id as id, l2_distance(data.coordinate, query.coordinate) as distance 
+FROM data, query 
+WHERE query.id=1 AND data.id != 1 
+ORDER BY l2_distance(data.coordinate, query.coordinate) 
+LIMIT 10) as fooo), my AS (
+SELECT id, distance, row_number() OVER () as newid 
+from (SELECT id, distance FROM results WHERE id != 1 ORDER BY distance) as foo
+)
+SELECT SUM(my.distance / brute.distance) FROM my, brute WHERE my.newid = brute.newid;
